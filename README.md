@@ -1,0 +1,3 @@
+# Nostrrent
+
+Nostr Torrent Server.
