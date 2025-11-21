@@ -16,7 +16,7 @@ object Main:
 
   /**
     * App properties, in this priority:
-    *   1. Command line `-Dprop=value`
+    *   1. Command line `-Dnostrrent.prop=value`
     *   2. From `nostrrent.local.properties`
     *   3. From `nostrrent.properties`
     */
