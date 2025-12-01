@@ -23,13 +23,3 @@ object Toolbox:
         hexToBytes(i+1, out)
 
     hexToBytes()
-
-  def toByteArray(long: Long): Array[Byte] =
-    @tailrec
-    def fillArray(arr: Array[Byte], offset: Int): Array[Byte] =
-      if offset == 8 then arr
-      else
-        arr(offset) = (long >> (56-(offset*8))).asInstanceOf[Byte]
-        fillArray(arr, offset+1)
-
-    fillArray(new Array(8), 0)

@@ -36,6 +36,7 @@ class NostrKeyPair(
     sign(bytes.toArray, bytes)
 
   private def sign(dataArray: Array[Byte], dataBytes: ByteVector) =
+    assert(Arrays.equals(dataBytes.toArray, dataArray))
     val signature = privKey.schnorrSign(dataBytes)
     if secp256k1.verifySchnorr(signature.bytes.toArray, dataArray, pubkey) then println("Signature validated!")
     else sys.error("Signature validation failed!")

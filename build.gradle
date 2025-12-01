@@ -19,7 +19,7 @@ java {
 }
 
 wrapper {
-    gradleVersion = '8.14.3' //'9.1.0'
+    gradleVersion = '8.14.3'
 }
 
 ext {
@@ -28,7 +28,6 @@ ext {
     vLogBack = '1.5.20'
     vJetty = '12.1.4'
     vScalatra = '3.1.2'
-    vLibTorrent4J = '2.1.0-38'
     vJLibTorrent = '2.0.12.7'
     vJsoniter = '2.38.4'
     vBech32 = '1.0.3'
@@ -49,12 +48,6 @@ dependencies {
     implementation "org.eclipse.jetty.ee10:jetty-ee10-servlet:$vJetty"
 
     implementation "org.scalatra:scalatra-jakarta_3:$vScalatra"
-    // implementation "org.scalatra:scalatra-json-jakarta:$vScalatra"
-    // implementation "org.scalatra:scalatra-forms-jakarta:$vScalatra"
-
-    // implementation "org.libtorrent4j:libtorrent4j:$vLibTorrent4J"
-    // implementation "org.libtorrent4j:libtorrent4j-windows:$vLibTorrent4J"
-    // implementation "org.libtorrent4j:libtorrent4j-linux:$vLibTorrent4J"
 
     implementation "com.frostwire:jlibtorrent:$vJLibTorrent"
     implementation "com.frostwire:jlibtorrent-linux-x86_64:$vJLibTorrent"
@@ -70,7 +63,6 @@ dependencies {
 
     testImplementation "org.scalatest:scalatest_3:$vScalaTest"
     testImplementation "com.vladsch.flexmark:flexmark-all:$vFlexMark"
-    // testImplementation "org.openjdk.nashorn:nashorn-core:$vNashorn"
     testImplementation "org.bitcoin-s:bitcoin-s-core_2.13:$vBitcoinS"
 }
 

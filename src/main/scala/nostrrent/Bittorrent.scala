@@ -3,34 +3,25 @@ package nostrrent
 import java.io.{ File, InputStream, FileOutputStream }
 import scala.annotation.tailrec
 import nostrrent.nostr.NostrSignature
-import scala.util.Try
+import scala.util.{ Try, Success, Failure }
 import java.net.URL
 import nostrrent.bittorrent.MagnetLink
 
-trait FileStorage:
-
-  type BTMHashHex = String
+trait Bittorrent:
 
   /**
-    * Save file collection.
+    * Save files to new torrent.
     * @param files
-    * @return the torrent id and hexadecimal representation of the torrent BTM Hash
+    * @return the new torrent identifier
     */
-  def saveFiles(files: IterableOnce[(String, InputStream)]): (TorrentID, BTMHashHex)
+  def saveFiles(files: IterableOnce[(String, InputStream)]): TorrentID
 
   /**
-    * List files in torrent.
-    * @param torrentID
-    * @return torrent filenames
-    */
-  def listFiles(torrentID: TorrentID): IndexedSeq[String]
-
-  /**
-    * Generate Bittorrent multi-hash (v2).
-    * @param torrentID The scope to hash
+    * Generate the Bittorrent multi-hash (v2).
+    * @param torrentID The torrent identifier
     * @return Hexadecimal BT hash
     */
-  def generateBTMHash(torrentID: TorrentID): BTMHashHex
+  def generateBTMHash(torrentID: TorrentID): BTMHash
 
   case class SeedInfo(magnet: MagnetLink, torrentBytes: Array[Byte])
 
@@ -48,7 +39,7 @@ trait FileStorage:
 
 
 trait LocalFileSystem(val workDir: File, ioBufferSize: Int)
-extends FileStorage:
+extends Bittorrent:
 
   require(workDir == workDir.getCanonicalFile, s"Working directory must be canonical")
 
@@ -57,27 +48,35 @@ extends FileStorage:
 
   private val WindowsIllegalChars = """[\/:\*\?"|<>]""".r
 
-  def saveFiles(files: IterableOnce[(String, InputStream)]): (TorrentID, BTMHashHex) =
+  def saveFiles(files: IterableOnce[(String, InputStream)]): TorrentID =
     @tailrec
-    def saveFiles(torrentID: TorrentID, files: IterableOnce[(String, InputStream)]): (TorrentID, BTMHashHex) =
+    def saveFiles(torrentID: TorrentID, files: IterableOnce[(String, InputStream)]): TorrentID =
       val newTorrentFolder = File(workDir, torrentID.toString)
       if newTorrentFolder.exists then
-        saveFiles(TorrentID(), files) // Torrent ID clash, try again (very unlikely)
+        saveFiles(TorrentID.random(), files) // Torrent ID clash, recursively try again (very unlikely)
       else if ! newTorrentFolder.mkdir() then
         throw SystemException(s"Cannot create dir: $newTorrentFolder")
       else
-        val filesWritten =
+        val filesWritten = Try:
           files.iterator
-            .map(writeTorrentFile(newTorrentFolder))
+            .zipWithIndex.map: // Prefix files with index to preserve order
+              case ((filename, inp), idx) =>
+                if idx > 999 then throw IAE("Too many files")
+                f"$idx%03d $filename" -> inp
+            .map(writeTorrentContent(newTorrentFolder))
             .size
-        if filesWritten == 0 then
-          Try { newTorrentFolder.delete() }
-          throw IAE("No file(s) provided")
-        // Success:
-        torrentID -> generateBTMHash(torrentID)
+        filesWritten match
+          case Failure(ex) =>
+            newTorrentFolder.listFiles().foreach(_.delete())
+            newTorrentFolder.delete()
+            throw ex
+          case Success(0) =>
+            newTorrentFolder.delete()
+            throw IAE("No file(s) provided")
+          case Success(_) =>
+            torrentID
 
-    saveFiles(TorrentID(), files)
-
+    saveFiles(TorrentID.random(), files)
 
   protected def webSeedPath(torrentID: TorrentID): File =
     val torrentDir = File(workDir, torrentID.toString)
@@ -87,14 +86,14 @@ extends FileStorage:
       case Array() => throw sys.error(s"No files: $torrentDir")
       case _ => torrentDir
 
-  private def writeTorrentFile(
-      torrentFolder: File, ioBuffer: Array[Byte] = new Array(ioBufferSize))(
+  private def writeTorrentContent(
+    torrentFolder: File, ioBuffer: Array[Byte] = new Array(ioBufferSize))(
       filename: String, inp: InputStream): Unit =
     val safeFilename = WindowsIllegalChars.replaceAllIn(filename, "_")
     val file = File(torrentFolder, safeFilename)
-    writeFile(inp, file, ioBuffer)
+    writeNewFile(inp, file, ioBuffer)
 
-  def writeFile(inp: InputStream, file: File, ioBuffer: Array[Byte] = new Array(ioBufferSize)): Unit =
+  def writeNewFile(inp: InputStream, file: File, ioBuffer: Array[Byte] = new Array(ioBufferSize)): Unit =
     if ! file.createNewFile() then
       if file.exists() then throw DuplicateFilename(file.getName)
       else throw SystemException(s"Cannot create file: ${file.getName}")
@@ -109,7 +108,8 @@ extends FileStorage:
           out.write(ioBuffer, 0, bytesRead)
           writeNextChunk()
 
-    try writeNextChunk()
+    try
+      writeNextChunk()
     catch case e: Exception =>
       file.delete()
       throw e

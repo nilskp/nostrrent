@@ -5,7 +5,7 @@ import jakarta.servlet.http.{ HttpServletRequest, HttpServletResponse }
 import nostrrent.*, web.MimeType
 
 /**
-  * Torrent file server.
+  * Torrent file server (magnet link `xs` parameter).
   * @param path server path prefix
   * @param workDir Root torrent dir
   */

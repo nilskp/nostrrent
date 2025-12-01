@@ -2,7 +2,7 @@ package nostrrent
 
 import fr.acinq.secp256k1.{ Secp256k1, Secp256k1Exception }
 import org.ngengine.bech32.{ Bech32, Bech32Exception }
-import nostrrent.Toolbox.hexToByteArray
+import nostrrent.*
 
 package object nostr:
 
@@ -14,10 +14,10 @@ package object nostr:
     bb.get(array)
     array
 
-  protected[nostr] def verifySignature(btHexHash: String, nostrSig: NostrSignature): Boolean =
+  protected[nostr] def verifySignature(btmHash: BTMHash, nostrSig: NostrSignature): Boolean =
     try
       val npubBytes = decodeNpub(nostrSig.npub)
-      val hashBytes = hexToByteArray(btHexHash)
+      val hashBytes = btmHash.toBytes()
       assert(hashBytes.length == 32)
       val sigBytes = nostrSig.hashSigBytes
       assert(sigBytes.length == 64, s"Signature must be 64 bytes, was ${sigBytes.length}")

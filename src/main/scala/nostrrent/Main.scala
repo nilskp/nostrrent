@@ -1,8 +1,5 @@
 package nostrrent
 
-// import web.jetty_scalatra.*
-// import org.eclipse.jetty.ee10.servlet.*
-// import org.eclipse.jetty.util.thread.VirtualThreadPool
 import nostrrent.bittorrent.JLibTorrent
 import java.io.File
 import java.util.Properties

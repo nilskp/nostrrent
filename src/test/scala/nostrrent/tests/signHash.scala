@@ -3,9 +3,10 @@ package nostrrent.tests
 import scodec.bits.ByteVector
 import nostrrent.nostr.NostrSignature
 import org.bitcoins.crypto.ECPrivateKey
+import nostrrent.BTMHash
 
 @main def signHash(hexHash: String): Unit =
-  require(btmHexHashValidation.matches(hexHash), s"Invalid BTM hex hash: $btmHexHashValidation")
+  require(BTMHash.Regex.matches(hexHash), s"Invalid BTM hex hash: $hexHash")
   val keys = nostrrent.NostrKeyPair()
   val btHashBytes = ByteVector.fromHex(hexHash).get
   val signature = keys.sign(btHashBytes)

@@ -14,7 +14,7 @@ import java.net.{ URL, URI }
 import org.eclipse.jetty.http.MimeTypes
 
 class TorrentServlet(
-  fileStorage: FileStorage,
+  bt: Bittorrent,
   serverPaths: ServerPaths,
   replaceLocalhost: Option[String])
 extends BaseServlet(replaceLocalhost)
@@ -25,10 +25,11 @@ with FileUploadSupport:
     holder.getRegistration.setMultipartConfig(MultipartConfigElement(TempDir.getAbsolutePath))
 
   private def handleUpload(files: Iterator[(String, InputStream)]): http.ActionResult =
-    val (torrentID, btHashHex) = fileStorage.saveFiles(files)
-    val location = mkSeedLocation(torrentID)
-    contentType = "text/plain"
-    http.Accepted(btHashHex, Map("Location" -> location))
+    val torrentID = bt.saveFiles(files)
+    val btHashHex = bt.generateBTMHash(torrentID)
+    contentType = MimeType.JSON
+    val body = s"""{"id":"$torrentID","hash":"$btHashHex"}"""
+    http.Accepted(body)
 
   post(s"$UploadPath/:filename"):
     request.getContentLength match
@@ -50,12 +51,6 @@ with FileUploadSupport:
             val filename = item.name
             filename -> item.part.getInputStream
       handleUpload(files)
-
-  private def mkSeedLocation(torrentId: TorrentID)(using request: HttpServletRequest): String =
-    val reqURL = requestURL()
-    val replacePos = reqURL.indexOf(request.getPathInfo)
-    val seedPath = SeedPathQ.replace(TorrentIDParm, torrentId.toString)
-    reqURL.take(replacePos) + seedPath
 
   private final val SeedPath = "/seed"
   private final val TorrentIDParm = ":torrentID"
@@ -87,15 +82,17 @@ with FileUploadSupport:
     seedOptions match
       case Left(failed) => failed
       case Right(Failure(ex)) => throw ex
-      case Right(Success(SeedOptions(nostrSig, exposeHttpSeeding))) =>
+      case Right(Success(SeedOptions(nostrSig, exposeHttpServer))) =>
         val makeWebSeedURL =
           serverPaths.wsPathPrefix
-            .filter(_ => exposeHttpSeeding)
+            .filter(_ => exposeHttpServer)
             .map: wsPathPrefix =>
               makeURL(wsPathPrefix, _)
-        fileStorage.verifyAndSeed(torrentID, nostrSig, makeWebSeedURL) match
+        bt.verifyAndSeed(torrentID, nostrSig, makeWebSeedURL) match
           case Failure(tooBig: TorrentTooBig) =>
             http.RequestEntityTooLarge(errMsg(tooBig))
+          case Failure(UnknownTorrent(id)) =>
+            http.NotFound(s"Unknown torrent: $id")
           case Failure(ise: IllegalStateException) =>
             http.Conflict(errMsg(ise))
           case Failure(th: Throwable) => throw th
@@ -105,7 +102,7 @@ with FileUploadSupport:
                 .map(makeURL(_, s"$torrentID$TorrentFileExt"))
             val magnet = seedInfo.magnet.copy(dn = None)
             val magnetLink =
-              location.filter(_ => exposeHttpSeeding)
+              location.filter(_ => exposeHttpServer)
                 .map(xsURL => magnet.copy(xs = xsURL :: Nil))
                 .getOrElse(magnet)
                 .toString()

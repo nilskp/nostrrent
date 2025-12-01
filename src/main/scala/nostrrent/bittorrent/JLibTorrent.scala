@@ -1,7 +1,6 @@
 package nostrrent.bittorrent
 
-import nostrrent.*
-import nostrrent.nostr.NostrSignature
+import nostrrent.*, nostr.NostrSignature
 import com.frostwire.jlibtorrent.{
   SessionManager, SessionParams, SettingsPack,
   TorrentBuilder, TorrentInfo,
@@ -12,6 +11,7 @@ import scala.util.Try
 import java.net.URL
 import com.frostwire.jlibtorrent.AlertListener
 import com.frostwire.jlibtorrent.alerts.{ Alert, AlertType }
+import com.frostwire.jlibtorrent.swig.{ create_torrent, create_flags_t }
 
 class JLibTorrent(rootTorrentDir: File, ioBufferSize: Int)
 extends nostrrent.LocalFileSystem(rootTorrentDir, ioBufferSize)
@@ -19,79 +19,69 @@ with AutoCloseable:
 
   import JLibTorrent.*
 
-  private val session = SessionManager() // Configure and start in companion
+  private val session = SessionManager() // Configure and start in companion object
+
+  private val CreateFlags = create_flags_t() or_ create_torrent.v2_only
+  private def TorrentBuilder(saveDir: File) =
+    new TorrentBuilder().flags(CreateFlags).path(saveDir)
 
   def close(): Unit = session.stop()
 
-  private def torrentInfo(torrentID: TorrentID): TorrentInfo =
+  def generateBTMHash(torrentID: TorrentID): BTMHash =
     val saveDir = File(workDir, torrentID.toString)
-    val torrent = TorrentBuilder()
-      .path(saveDir)
-      .generate()
-    TorrentInfo(torrent.entry.bencode)
+    val torrent = TorrentBuilder(saveDir).generate()
+    val hash = TorrentInfo(torrent.entry.bencode).infoHashV2().toHex()
+    BTMHash(hash)
 
-  def generateBTMHash(torrentID: TorrentID): String =
-    torrentInfo(torrentID).infoHashV2.toHex()
-
-  def listFiles(torrentID: TorrentID): IndexedSeq[String] =
-    val info = torrentInfo(torrentID)
-    val files = info.files()
-    (0 until info.numFiles).collect:
-      case idx
-        if files.fileFlags(idx).notPadding =>
-          files.fileName(idx)
 
   def verifyAndSeed(
     torrentID: TorrentID, sig: NostrSignature,
-    webSeedURL: Option[String => URL])
-  : Try[SeedInfo] = Try:
+    webSeedURL: Option[String => URL]): Try[SeedInfo] =
+    Try:
 
-    // val canonicalSeedPath = torrentSeedPath(torrentID).getCanonicalFile()
-    val saveDir = File(workDir, torrentID.toString).getCanonicalFile()
-    val torrentFile = File(rootTorrentDir, s"$torrentID$TorrentFileExt")
+      val saveDir = File(workDir, torrentID.toString).getCanonicalFile()
+      if ! saveDir.isDirectory then throw UnknownTorrent(torrentID)
 
-    val (info, torrentBytes) =
-      if torrentFile.exists() then
-        loadTorrentInfo(torrentFile)
-      else
-        val torrent =
-          TorrentBuilder()
-            .path(saveDir)
-            .creator(Creator)
-            .comment(sig.toComment)
-            .generate()
-        val torrentBytes = torrent.entry.bencode
-        TorrentInfo.bdecode(torrentBytes) -> torrentBytes
+      val torrentFile = File(rootTorrentDir, s"$torrentID$TorrentFileExt")
+      val proof = s"${sig.npub}:${sig.hashSigHex}"
 
-    log.info(s"info.isValid: ${info.isValid}")
-    log.info(s"info.isLoaded: ${info.isLoaded}")
-    log.info(s"info.isValid: ${info.isValid}")
+      val (info, torrentBytes) =
+        if torrentFile.exists() then
+          loadTorrent(torrentFile)
+        else
+          val torrent =
+            TorrentBuilder(saveDir)
+              .creator(Creator)
+              .comment(proof)
+              .generate()
+          val torrentBytes = torrent.entry.bencode
+          TorrentInfo.bdecode(torrentBytes) -> torrentBytes
 
-    if torrentBytes.length > MaxTorrentFileSize then
-      throw TorrentTooBig(torrentBytes.length)
-    if info.comment != sig.toComment then
-      throw IllegalStateException("Signature mismatch")
-    if ! sig.verifySignature(info.infoHashV2.toHex) then
-      throw IAE("Signature validation failed")
+      if torrentBytes.length > MaxTorrentFileSize then
+        throw TorrentTooBig(torrentBytes.length)
+      if info.comment != proof then
+        throw IllegalStateException("Signature mismatch")
+      if ! sig.verifySignature(info.btmHash()) then
+        throw IAE("Signature validation failed")
 
-    webSeedURL.map: makeWebSeedURL =>
-      val seedPath = webSeedPath(torrentID)
-      val relativeSeedPath =
-        if seedPath.isDirectory then seedPath.getName
-        else s"$torrentID/${seedPath.getName}"
-      val webSeedURL = makeWebSeedURL(relativeSeedPath)
-      info.addUrlSeed(webSeedURL.toString)
+      webSeedURL.map: makeWebSeedURL =>
+        val seedPath = webSeedPath(torrentID)
+        val relativeSeedPath =
+          if seedPath.isDirectory then seedPath.getName
+          else s"$torrentID/${seedPath.getName}"
+        val webSeedURL = makeWebSeedURL(relativeSeedPath)
+        info.addUrlSeed(webSeedURL.toString)
 
-    if ! torrentFile.exists() then
-      this.writeFile(
-        ByteArrayInputStream(info.bencode),
-        torrentFile)
+      if ! torrentFile.exists() then
+        this.writeNewFile(
+          ByteArrayInputStream(info.bencode),
+          torrentFile)
 
-    // if session.find(info) == null then // Race condition, but no obvious way to avoid
-    JLibTorrent.seed(session, saveDir, info)
+      // if session.find(info) == null then // Race condition, but no obvious way to avoid
+      JLibTorrent.seed(session, saveDir, info)
 
-    val magnet = MagnetLink.parse(info.makeMagnetUri())
-    SeedInfo(magnet, torrentBytes)
+      val magnet = MagnetLink.parse(info.makeMagnetUri())
+      SeedInfo(magnet, torrentBytes)
 
 end JLibTorrent
 
@@ -105,6 +95,10 @@ object JLibTorrent:
 
   extension[T](fileFlags: swig.file_flags_t)
     def notPadding: Boolean = ! fileFlags.and_(FLAG_PAD_FILE).nonZero()
+
+  extension (info: TorrentInfo)
+    def btmHash(): BTMHash =
+      BTMHash(info.infoHashV2().toHex)
 
   private case class SeedFile(torrentFile: File, torrentFolder: File):
     assert(torrentFile.isFile)
@@ -140,22 +134,9 @@ object JLibTorrent:
 
   private def seed(session: SessionManager, torrentDir: File, info: TorrentInfo): Unit =
     log.info(s"Seeding `${torrentDir}` | ${info.infoHashV2.toHex}")
-    val files = info.files
-    val infoNumFiles = info.numFiles()
-    val filesNumFiles = files.numFiles()
-    val infoName = info.name()
-    val filesName = files.name
-    log.info(s"\\t info.name: $infoName, files.name: $filesName, info.numFiles: $infoNumFiles, files: $filesNumFiles")
-    val paths = files.paths()
-    log.info(s"\\t paths = $paths")
-    (0 until filesNumFiles).map: i =>
-      val filename = files.fileName(i)
-      val path = files.filePath(i)
-      val size = files.fileSize(i)
-      log.info(s"\\t\\t path: $path, filename: $filename, size: $size")
     session.download(info, torrentDir, null, null, null, SeedFlags)
 
-  private def loadTorrentInfo(torrentFile: File): (TorrentInfo, Array[Byte]) =
+  private def loadTorrent(torrentFile: File): (TorrentInfo, Array[Byte]) =
     val bytes = FileInputStream(torrentFile).readAllBytes()
     TorrentInfo.bdecode(bytes) -> bytes
 
@@ -200,5 +181,15 @@ object JLibTorrent:
     // Start seeding existing torrents:
     existing.iterator.foreach:
       case SeedFile(torrentFile, folder) =>
-        val (info, _) = loadTorrentInfo(torrentFile)
+        val (info, _) = loadTorrent(torrentFile)
         seed(session, folder, info)
+
+  end startSession
+
+  def createTorrent(files: Iterable[File]): TorrentInfo =
+    import com.frostwire.jlibtorrent.swig.*, libtorrent.add_files
+    val fs = file_storage()
+    files.foreach: file =>
+      add_files(fs, file.getCanonicalPath)
+
+    ???
